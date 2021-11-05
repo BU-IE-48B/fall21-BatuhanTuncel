@@ -1,7 +1,5 @@
 <html>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
    <h1>Homework 1</h1> 
 <p>My first Homework links are:<p>
    <p> "https://github.com/BU-IE-48B/fall21-BatuhanTuncel/blob/4f7e301794435370419f536f74cc965ef685108b/GestureHW1.html" <p>
