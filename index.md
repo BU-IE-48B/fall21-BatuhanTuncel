@@ -8,5 +8,8 @@
 ## Homework 1
 
 [here](GestureHW1.html) HTML file of Homework 1 <br>
-[here](GestureHW1.ipynb) R Code of Homework 1
+[here](GestureHW1.ipynb) R Code of Homework 1 <br>
+[here](HW1/IE48B_Fall21_Homework_1.pdf) Homework 1
+
+
 
