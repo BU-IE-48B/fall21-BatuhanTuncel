@@ -13,7 +13,7 @@
 
 
 
-## Homework 
+## Homework 2
 
 [here](LassoHW2.html) HTML file of Homework 2 <br>
 [here](LassoHW2.ipynb) R Code of Homework 2 <br>
