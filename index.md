@@ -18,3 +18,9 @@
 [here](LassoHW2.html) HTML file of Homework 2 <br>
 [here](LassoHW2.ipynb) R Code of Homework 2 <br>
 [here](IE48B_Fall21_Homework2.pdf) Homework 2 <br>
+
+## Homework 3
+
+[here](HW3.html) HTML file of Homework 3 <br>
+[here](HW3.ipynb) R Code of Homework 3 <br>
+[here](IE48B_Fall21_Homework3.pdf) Homework 3 <br>
