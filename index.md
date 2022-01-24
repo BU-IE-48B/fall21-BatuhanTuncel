@@ -27,3 +27,9 @@
 
 ## Project Progress Journal
 
+[here](Progress Journal.html) HTML file of Project <br>
+[here](project.html) HTML file of Project code <br>
+[here](Project.Rmd) RMD file of Project code <br>
+
+
+
