@@ -1,0 +1,774 @@
+---
+title: "project"
+author: "Hakan Ekiz/Batuhan Tunçel/Yusuf Beşiroğlu - IE48B - Fall2021"
+date: "24 January 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+require(data.table)
+require(ggplot2)
+require(repr)
+require(rpart)
+require(rattle)
+require(TSrepr)
+require(TSdist)
+require(dtw)
+require(zoo)
+require(genlasso)
+require(e1071)
+require(lubridate)
+require(forecast)
+require(dplyr)
+```
+
+```{r}
+options(repr.plot.width=15, repr.plot.height=8)
+
+current_folder=getwd()
+```
+
+---
+The latest input <br>
+```{r}
+
+dat=fread('bulk_imbalance.csv')
+weat=fread('2022-01-21_weather.csv')
+head(dat)
+head(weat)
+
+```
+
+
+```{r}
+
+c1 = dat
+c1 = c1[,list(date,hour,net,system_direction)]
+c1[,datetime:=ymd(date)+dhours(hour)]
+c1=c1[order(datetime)]
+
+c2 = c1[,list(datetime,net,system_direction)]
+c2
+
+
+```
+
+
+
+```{r}
+w1 = weat
+w1[,datetime:=ymd(date)+dhours(hour)]
+w1=w1[order(datetime)]
+w1
+
+```
+
+Ordering by date-time for all locations and their weather conditions <br>
+Also bringing all parameters together <br>
+```{r}
+w1 = w1 %>% 
+  mutate(loc = 
+           case_when(lat <= 36.50 ~ "loc1" ,
+                     lat==37.00 ~ "loc2" ,
+                     lat==38.00 ~ "loc3" ,
+                     lat==38.50 ~ "loc4" ,
+                     lat==39.75 ~ "loc5" ,
+                     lat==40.00 ~ "loc6" ,
+                     lat>=41.00 ~ "loc7" )
+         )
+w1= as.data.table(w1)
+w1
+```
+
+
+```{r}
+
+w1[,class:=paste(loc,variable)]
+w1
+
+```
+
+
+
+
+```{r}
+
+w2 = w1[,list(datetime,class,value)]
+w2[,class:=as.factor(class)]
+w2
+```
+
+
+```{r}
+trainw2=dcast(w2[!is.na(value)],datetime~class,value.var='value')
+trainw2
+```
+
+```{r}
+names(trainw2) <- gsub(" ", "_", names(trainw2))
+trainw2
+```
+
+
+
+```{r}
+
+all = merge(c2,trainw2, by="datetime")
+all
+```
+
+
+```{r}
+ggplot(all ,aes(x=datetime,y=net)) + geom_line()
+```
+
+
+```{r}
+all[,trnd:=1:.N]
+
+all[,w_day:=as.character(wday(datetime,label=T))]
+all[,mon:=as.character(month(datetime,label=T))]
+all[,hour:=as.factor(hour(datetime))]
+all[,Date:=as.Date(datetime)]
+all
+```
+
+
+
+First linear regression uses all parameters and it's our baseline <br>
+```{r}
+
+lm1=lm(net~trnd+w_day+mon+hour+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_wdir_10m+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc1_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_TMP_2.m.above.ground+loc3_wdir_10m+loc1_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_TMP_2.m.above.ground+loc4_wdir_10m+loc1_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_TMP_2.m.above.ground+loc5_wdir_10m+loc1_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_TMP_2.m.above.ground+loc6_wdir_10m+loc1_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer+loc7_TMP_2.m.above.ground+loc7_wdir_10m+loc1_ws_10m
+       ,all)
+
+
+summary(lm1)
+
+
+```
+
+```{r}
+tmp=copy(all)
+tmp[,actual:=net]
+tmp[,predicted:=predict(lm1,tmp)]
+#head(tmp)
+ggplot(tmp[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+```{r}
+lm2=lm(net~trnd+w_day+mon+hour,all)
+summary(lm2)
+```
+
+```{r}
+tmp2=copy(all)
+tmp2[,actual:=net]
+tmp2[,predicted:=predict(lm2,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+```{r}
+checkresiduals(lm2$residuals)
+
+```
+
+```{r}
+tmp2[,prevday:=shift(x=tmp2$net,n=24L,fill=mean(tmp2$net))]
+tmp2[,prevweek:=shift(x=tmp2$net,n=168L,fill=mean(tmp2$net))]
+tmp2
+```
+
+After that try 13 linear regression to reach better results<br>
+```{r}
+lm2_1=lm(net~trnd+w_day+mon+hour+prevday+prevweek,
+                 tmp2)
+summary(lm2_1)
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_1,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+
+```{r}
+
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~w_day+mon+hour+prevday+prevweek+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_wdir_10m+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_TMP_2.m.above.ground+loc3_wdir_10m+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_TMP_2.m.above.ground+loc4_wdir_10m+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_TMP_2.m.above.ground+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_TMP_2.m.above.ground+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer+loc7_TMP_2.m.above.ground+loc7_wdir_10m+loc7_ws_10m,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+```{r}
+
+tmp2[,loc7tmp2ag:=as.numeric(loc7_TMP_2.m.above.ground>=30)]
+tmp2[,pv:=as.numeric(prevweek>=2070)]
+tmp2[,loc7tmp2ag2:=as.numeric(loc7_TMP_2.m.above.ground>=31)]
+
+lm2_2=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2,
+                 tmp2)
+summary(lm2_2)
+
+
+
+```
+
+
+```{r}
+
+tmp2[,predicted:=predict(lm2_2,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~w_day+mon+hour+prevday+prevweek+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_wdir_10m+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_TMP_2.m.above.ground+loc3_wdir_10m+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_TMP_2.m.above.ground+loc4_wdir_10m+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_TMP_2.m.above.ground+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_TMP_2.m.above.ground+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer+loc7_wdir_10m+loc7_ws_10m,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+```{r}
+
+tmp2[,loc5tmp2ag:=as.numeric(loc5_TMP_2.m.above.ground>=29)]
+tmp2[,pd:=as.numeric(prevday>=2329)]
+tmp2[,workday:=as.numeric(!w_day %in% c('Cmt','Paz'))]
+
+lm2_3=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday,
+                 tmp2)
+summary(lm2_3)
+
+
+
+```
+
+
+
+```{r}
+
+tmp2[,predicted:=predict(lm2_3,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~mon+hour+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_wdir_10m+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_TMP_2.m.above.ground+loc3_wdir_10m+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_TMP_2.m.above.ground+loc4_wdir_10m+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_TMP_2.m.above.ground+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer+loc7_wdir_10m+loc7_ws_10m,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+```{r}
+
+tmp2[,loc4tmp2ag:=as.numeric(loc4_TMP_2.m.above.ground<8.6)]
+tmp2[,whour:=as.numeric(as.numeric(hour)<9 | as.numeric(hour)>18)]
+tmp2[,loc3wdir:=as.numeric(loc3_wdir_10m<336)]
+
+lm2_4=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir,
+                 tmp2)
+summary(lm2_4)
+
+
+
+```
+
+
+
+```{r}
+
+tmp2[,predicted:=predict(lm2_4,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~mon+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_wdir_10m+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_TMP_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_wdir_10m+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_TMP_2.m.above.ground+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer+loc7_wdir_10m+loc7_ws_10m,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+```{r}
+
+tmp2[,loc6tmp2ag:=as.numeric(loc6_TMP_2.m.above.ground>=26)]
+tmp2[,loc7ws:=as.numeric(loc7_ws_10m<3)]
+tmp2[,loc1wdir:=as.numeric(loc1_wdir_10m>=172)]
+
+lm2_5=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir,
+                 tmp2)
+summary(lm2_5)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_5,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~mon+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_TMP_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_wdir_10m+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer+loc7_wdir_10m,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+```{r}
+
+tmp2[,loc4wdir:=as.numeric(loc4_wdir_10m<170)]
+tmp2[,loc7wdir:=as.numeric(loc7_wdir_10m>=214)]
+tmp2[,loc3tmp2ag:=as.numeric(loc3_TMP_2.m.above.ground>=20)]
+
+lm2_6=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag,
+                 tmp2)
+summary(lm2_6)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_6,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~mon+
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_TCDC_low.cloud.layer+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_RH_2.m.above.ground+loc4_TCDC_low.cloud.layer+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+
+```{r}
+
+tmp2[,loc3tcdc:=as.numeric(loc3_TCDC_low.cloud.layer>=8.6)]
+tmp2[,mon1:=as.numeric(!mon %in% c('Haz','Tem','Ağu','Eyl','Eki'))]
+tmp2[,loc4rh:=as.numeric(loc4_RH_2.m.above.ground<69)]
+
+lm2_7=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh,
+                 tmp2)
+summary(lm2_7)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_7,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_TMP_2.m.above.ground+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_TCDC_low.cloud.layer+loc4_ws_10m+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_RH_2.m.above.ground+loc6_TCDC_low.cloud.layer+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+```{r}
+
+tmp2[,loc4ws:=as.numeric(loc4_ws_10m<3.5)]
+tmp2[,loc6rh:=as.numeric(loc6_RH_2.m.above.ground<40)]
+tmp2[,loc1tmp2ag:=as.numeric(loc1_TMP_2.m.above.ground>=15)]
+
+lm2_8=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh+loc4ws:loc6rh:loc1tmp2ag,
+                 tmp2)
+summary(lm2_8)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_8,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_TMP_2.m.above.ground+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_TCDC_low.cloud.layer+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+loc5_ws_10m+
+         loc6_DSWRF_surface+loc6_TCDC_low.cloud.layer+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_RH_2.m.above.ground+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+```{r}
+
+tmp2[,loc5ws:=as.numeric(loc5_ws_10m<2.4)]
+tmp2[,loc2tmp2ag:=as.numeric(loc2_TMP_2.m.above.ground<2.3)]
+tmp2[,loc7rh2:=as.numeric(loc7_RH_2.m.above.ground<63)]
+
+lm2_9=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh+loc4ws:loc6rh:loc1tmp2ag+loc5ws:loc2tmp2ag:loc7rh2,
+                 tmp2)
+summary(lm2_9)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_9,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+loc1_ws_10m+
+         loc2_DSWRF_surface+loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_TCDC_low.cloud.layer+
+         loc5_DSWRF_surface+loc5_RH_2.m.above.ground+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+
+         loc6_DSWRF_surface+loc6_TCDC_low.cloud.layer+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+
+```{r}
+
+tmp2[,loc5rh:=as.numeric(loc5_RH_2.m.above.ground<16)]
+tmp2[,loc1ws:=as.numeric(loc1_ws_10m>=3.9)]
+tmp2[,loc2dswrf:=as.numeric(loc2_DSWRF_surface<841)]
+
+lm2_10=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh+loc4ws:loc6rh:loc1tmp2ag+loc5ws:loc2tmp2ag:loc7rh2+loc5rh:loc1ws:loc2dswrf,
+                 tmp2)
+summary(lm2_10)
+
+
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_10,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~
+         loc1_DSWRF_surface+loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+
+         loc2_RH_2.m.above.ground+loc2_TCDC_low.cloud.layer+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_TCDC_low.cloud.layer+
+         loc5_DSWRF_surface+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+
+         loc6_DSWRF_surface+loc6_TCDC_low.cloud.layer+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+```{r}
+
+tmp2[,loc6tcdc:=as.numeric(loc6_TCDC_low.cloud.layer>=84)]
+tmp2[,loc1dswrf:=as.numeric(loc1_DSWRF_surface>=90)]
+tmp2[,loc2rh2:=as.numeric(loc2_RH_2.m.above.ground>=91)]
+
+lm2_11=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh+loc4ws:loc6rh:loc1tmp2ag+loc5ws:loc2tmp2ag:loc7rh2+loc5rh:loc1ws:loc2dswrf
+         +loc6tcdc:loc1dswrf:loc2rh2,
+                 tmp2)
+summary(lm2_11)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_11,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+```
+
+
+```{r}
+
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~
+         loc1_RH_2.m.above.ground+loc1_TCDC_low.cloud.layer+
+         loc2_TCDC_low.cloud.layer+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+loc3_ws_10m+
+         loc4_DSWRF_surface+loc4_TCDC_low.cloud.layer+
+         loc5_DSWRF_surface+loc5_TCDC_low.cloud.layer+loc5_wdir_10m+
+         loc6_DSWRF_surface+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+
+```
+
+```{r}
+
+tmp2[,loc3ws:=as.numeric(loc3_ws_10m<1.1)]
+tmp2[,loc1tcdc:=as.numeric(loc1_TCDC_low.cloud.layer>=63)]
+tmp2[,loc5wdir:=as.numeric(loc5_wdir_10m<69)]
+
+lm2_12=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh+loc4ws:loc6rh:loc1tmp2ag+loc5ws:loc2tmp2ag:loc7rh2+loc5rh:loc1ws:loc2dswrf
+         +loc6tcdc:loc1dswrf:loc2rh2+loc3ws:loc1tcdc:loc5wdir,
+                 tmp2)
+summary(lm2_12)
+
+
+```
+
+```{r}
+tmp2[,predicted:=predict(lm2_12,tmp2)]
+#head(tmp)
+ggplot(tmp2[Date=='2019-05-08'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+
+
+
+
+```
+
+```{r}
+tmp2[,residual:=actual-predicted]
+
+
+fit_res_tree=rpart(residual~
+         loc1_RH_2.m.above.ground+
+         loc2_TCDC_low.cloud.layer+loc2_wdir_10m+loc2_ws_10m+
+         loc3_DSWRF_surface+loc3_RH_2.m.above.ground+
+         loc4_DSWRF_surface+loc4_TCDC_low.cloud.layer+
+         loc5_DSWRF_surface+loc5_TCDC_low.cloud.layer+
+         loc6_DSWRF_surface+loc6_wdir_10m+loc6_ws_10m+
+         loc7_DSWRF_surface+loc7_TCDC_low.cloud.layer,tmp2,
+                   control=rpart.control(cp=0,maxdepth=3))
+
+fancyRpartPlot(fit_res_tree)
+```
+
+After comparision between models, deciding to continue with the 13th model <br>
+Submit results depends on this model <br>
+```{r}
+tmp2[,loc3rh:=as.numeric(loc3_RH_2.m.above.ground<25)]
+tmp2[,loc5tcdc:=as.numeric(loc5_TCDC_low.cloud.layer<0.15)]
+tmp2[,loc1rh:=as.numeric(loc1_RH_2.m.above.ground>=15)]
+
+lm2_13=lm(net~trnd+w_day+mon+hour+prevday+prevweek+loc7tmp2ag:pv:loc7tmp2ag2+loc5tmp2ag:pd:workday+loc4tmp2ag:whour:loc3wdir+loc6tmp2ag:loc7ws:loc1wdir
+         +loc4wdir:loc7wdir+loc3tmp2ag+loc3tcdc:mon1:loc4rh+loc4ws:loc6rh:loc1tmp2ag+loc5ws:loc2tmp2ag:loc7rh2+loc5rh:loc1ws:loc2dswrf
+         +loc6tcdc:loc1dswrf:loc2rh2+loc3ws:loc1tcdc:loc5wdir+loc3rh:loc5tcdc:loc1rh,
+                 tmp2)
+summary(lm2_13)
+
+tmp2[,predicted:=predict(lm2_13,tmp2)]
+
+```
+
+```{r}
+checkresiduals(lm2_13$residuals)
+
+```
+
+```{r}
+
+tmp2[,residuals13 := residuals(lm2_13)]
+acf(residuals(lm2_13) , lag.max = 160)
+
+
+```
+
+```{r}
+ggplot(tmp2[Date=='2022-01-07'] ,aes(x=datetime)) +
+        geom_line(aes(y=actual,color='real')) + 
+        geom_line(aes(y=predicted,color='predicted'))
+
+```
+
+
+
+
+
+```{r}
+tmp2 = tmp2 %>% 
+  mutate(predicted_diretion = 
+           case_when(predicted < -50 ~ "Negative" ,
+                     predicted>=-50 & predicted<=50 ~ "Neutral" ,
+                     predicted> 50 ~ "Positive" )
+         )
+tmp2= as.data.table(tmp2)
+tmp2
+```
+
+```{r}
+submission = tmp2[,list(Date,hour,system_direction,predicted_diretion)]
+tail(submission,12)
+```
+
+
+
+
+

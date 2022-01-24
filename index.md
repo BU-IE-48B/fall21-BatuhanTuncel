@@ -24,3 +24,6 @@
 [here](HW3.html) HTML file of Homework 3 <br>
 [here](HW3.ipynb) R Code of Homework 3 <br>
 [here](IE48B_Fall21_Homework3.pdf) Homework 3 <br>
+
+## Project Progress Journal
+
